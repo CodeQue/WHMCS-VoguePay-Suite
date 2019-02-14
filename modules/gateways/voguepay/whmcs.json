@@ -1,0 +1,23 @@
+{
+    "schema": "1.0",
+    "type": "whmcs-gateways",
+    "name": "VoguePay",
+    "license": "proprietary",
+    "category": "payments",
+    "description": {
+        "name": "VoguePay",
+        "tagline": "VoguePay allows you to process card payments online"
+    },
+    "logo": {
+        "filename": "https://s3.amazonaws.com/helpshelf-production/media/uploads/sites/voguepay/Main_VoguePaySymbol_144.png"
+    },
+    "support": {
+        "docs_url": "https:\/\/voguepay.com\/"
+    },
+    "authors": [
+        {
+            "name": "Snazzy Debbie",
+            "homepage": "https:\/\/www.snazzy.com\/"
+        }
+    ]
+}
