@@ -19,48 +19,49 @@
  * @copyright Copyright (c) WHMCS Limited 2017
  * @license http://www.whmcs.com/license/ WHMCS Eula
  */
-
 // Require libraries needed for gateway module functions.
 require_once __DIR__ . '/../../../init.php';
 $whmcs->load_function('gateway');
 $whmcs->load_function('invoice');
-
 // Detect module name from filename.
 $gatewayModuleName = basename(__FILE__, '.php');
-
 // Fetch gateway configuration parameters.
 $gatewayParams = getGatewayVariables($gatewayModuleName);
-
 // Die if module is not active.
 if (!$gatewayParams['type']) {
     die("Module Not Activated");
 }
+// Retrieve data returned in payment gateway callback
+// Varies per payment gateway
+//transaction id from gateway
+$transactionId = $_POST["transaction_id"];
 
-//get the gateway parameters needed
+//set parameters needed to connect to gateway
 $voguepay_id = $gatewayParams['voguepay_id'];
 $voguepay_email = $gatewayParams['voguepay_email'];
 $voguepay_token = $gatewayParams['voguepay_token'];
 $voguepay_demo = $gatewayParams['voguepay_demo'];
 
-$url = 'https://voguepay.com/api/';
-$operation = 'query';
-$reference = time().mt_rand(0,9999999);
-$hash = hash('sha512', $gatewayParams['voguepay_token']. $operation.$gatewayParams['voguepay_email'].$reference);
+$voguepay_url = 'https://voguepay.com/api/';
+$voguepay_operation = 'query';
+$voguepay_reference = time().mt_rand(0,9999999);
+$voguepay_hash = hash('sha512', $voguepay_token. $voguepay_operation.$voguepay_email.$voguepay_reference);
 
 $voguepay_array = array (
-    "task" : $operation,
-    "merchant" : $gatewayParams['voguepay_id'],
-    "ref" : $reference,
-    "hash" : $hash,
-    "demo" : ($gatewayParams['voguepay_demo'] == 'yes') ? true : false,
-    "transaction_id" : $_POST["transaction_id"],
+    "task" => $voguepay_operation,
+    "merchant" => $voguepay_id,
+    "ref" => $voguepay_reference,
+    "hash" => $voguepay_hash,
+    "demo" => ($gatewayParams['voguepay_demo'] == 'on') ? true : false,
+    "transaction_id" => $transactionId
 );
+
 //json encode and send details to the gateway
 $voguepay_string = 'json='.urlencode(json_encode($voguepay_array));
 
 //open curl connection
 $ch = curl_init();
-curl_setopt($ch,CURLOPT_URL, $api);
+curl_setopt($ch,CURLOPT_URL, $voguepay_url);
 curl_setopt($ch,CURLOPT_HEADER, false);
 curl_setopt($ch, CURLOPT_POST, 1);
 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -69,31 +70,30 @@ curl_setopt($ch,CURLOPT_FOLLOWLOCATION,TRUE);
 curl_setopt($ch,CURLOPT_MAXREDIRS,2);
 $voguepay_response = curl_exec($ch);
 curl_close($ch);
+
 //Result is json string so we convert into array
 $voguepay_response = substr($voguepay_response, 3);
 $voguepay_response = json_decode($voguepay_response,true);
-// confirm transaction hash
-$received_hash = $voguepy_response['hash'];
-$expected_hash = hash('sha512',$gatewayParams['voguepay_token'].$gatewayParams['voguepay_email'].$voguepay_response['salt']);
-if($received_hash != $expected_hash){
+
+$success = ($voguepay_response['transaction']['status'] == "Approved") ? true : false;
+$invoiceId = $voguepay_response['transaction']['merchant_ref'];
+$paymentAmount = $voguepay_response['transaction']['total'];
+$paymentFee = $voguepay_response['transaction']['charges_paid_by_merchant'];
+$hash = $voguepay_response['hash'];
+$transactionStatus = $success ? 'Success' : 'Failure';
+/**
+ * Validate callback authenticity.
+ *
+ * Most payment gateways provide a method of verifying that a callback
+ * originated from them. In the case of our example here, this is achieved by
+ * way of a shared secret which is used to build and compare a hash.
+ */
+$expected_hash = hash('sha512',$voguepay_token.$voguepay_email.$voguepay_response['salt']);
+if($hash != $expected_hash){
     //transaction is either not from voguepay or manipulated
     $transactionStatus = 'Hash Verification Failure';
     $success = false;
 }
-
-
-// Retrieve data returned in payment gateway callback
-// Varies per payment gateway
-$success = $_POST["x_status"];
-$invoiceId = $_POST["x_invoice_id"];
-$transactionId = $_POST["x_trans_id"];
-$paymentAmount = $_POST["x_amount"];
-$paymentFee = $_POST["x_fee"];
-$hash = $_POST["x_hash"];
-
-$transactionStatus = $success ? 'Success' : 'Failure';
-
-
 /**
  * Validate Callback Invoice ID.
  *
@@ -107,8 +107,7 @@ $transactionStatus = $success ? 'Success' : 'Failure';
  * @param int $invoiceId Invoice ID
  * @param string $gatewayName Gateway Name
  */
-$invoiceId = checkCbInvoiceID($voguepay_response['merchant_ref'], $gatewayParams['name']);
-
+$invoiceId = checkCbInvoiceID($invoiceId, $gatewayParams['name']);
 /**
  * Check Callback Transaction ID.
  *
@@ -119,8 +118,7 @@ $invoiceId = checkCbInvoiceID($voguepay_response['merchant_ref'], $gatewayParams
  *
  * @param string $transactionId Unique Transaction ID
  */
-checkCbTransID($voguepay_response['transaction_id']);
-
+checkCbTransID($transactionId);
 /**
  * Log Transaction.
  *
@@ -133,12 +131,12 @@ checkCbTransID($voguepay_response['transaction_id']);
  * @param string|array $debugData    Data to log
  * @param string $transactionStatus  Status
  */
-logTransaction($gatewayParams['name'], $voguepay_response, $voguepay_response['response_message']);
-
+logTransaction($gatewayParams['name'], $voguepay_response, $transactionStatus);
 $paymentSuccess = false;
-
-if ($voguepay_response['merchant_id'] == $gatewayParams['voguepay_id'] && $voguepay_response['status'] == 'Approved') {
-
+//check demo for merchant id
+$voguepay_id = ($gatewayParams['voguepay_demo'] == 'on') ? "demo" : $voguepay_id;
+if ($success && $voguepay_response['transaction']['merchant_id'] == $voguepay_id && $voguepay_response['transaction']['status'] == 'Approved') {
+    // die("<pre>".print_r($voguepay_response, true)."</pre>");
     /**
      * Add Invoice Payment.
      *
@@ -150,19 +148,15 @@ if ($voguepay_response['merchant_id'] == $gatewayParams['voguepay_id'] && $vogue
      * @param float $paymentFee      Payment fee (optional)
      * @param string $gatewayModule  Gateway module name
      */
-    $paymentFee = '';
     addInvoicePayment(
-        $voguepay_response['merchant_ref'],
-        $voguepay_response['transaction_id'],
-        $voguepay_response['total_amount'],
+        $invoiceId,
+        $transactionId,
+        $paymentAmount,
         $paymentFee,
         $gatewayModuleName
     );
-
     $paymentSuccess = true;
-
 }
-
 /**
  * Redirect to invoice.
  *

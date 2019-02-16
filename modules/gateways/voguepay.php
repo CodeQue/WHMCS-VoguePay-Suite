@@ -1,4 +1,5 @@
 <?php
+
 /**
  * WHMCS Sample Merchant Gateway Module
  *
@@ -160,7 +161,7 @@ function voguepay_3dsecure($params)
     //other details needed by the gateway
     // the originating site url
     $origin_url = $params['systemurl'];
-    $callback_url = $params['systemurl'] . '/modules/gateways/callback/' . $params['paymentmethod'] . '.php';
+    $callback_url = $params['systemurl'] . 'modules/gateways/callback/' . $params['paymentmethod'] . '.php';
 
     // compile parameters and send request to gateway
     $url = 'https://voguepay.com/api/';
@@ -190,8 +191,8 @@ function voguepay_3dsecure($params)
         "referral_url" => $origin_url,
         "response_url" => $callback_url,
         "redirect_url" => $callback_url,
-        "demo" => ($voguepay_demo == 'yes') ? true : false,
-        "cars" => array (
+        "demo" => ($voguepay_demo == 'on') ? true : false,
+        "card" => array (
             "name" => $card_holder_fullname,
             "pan" => $card_number,
             "month" => substr($card_expiry, 0, 2),
@@ -235,10 +236,19 @@ function voguepay_3dsecure($params)
                         </strong>
                     </div>";
     } else if ($json_response['status'] == "OK") {
-        $htmlOutput = '<form method="post" action="' . $json_response['redirect_url'] . '">';
-        $htmlOutput .= '<input type="hidden" name="voguepay" value="" />';
-        $htmlOutput .= '<input type="submit" value="' . $params['langpaynow'] . '" />';
-        $htmlOutput .= '</form>';
+        // confirm if ssl is active for website
+        // if ssl is active, load payment form in an iframe
+        // if not active, redirect 
+        $activeSSL = ((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || $_SERVER['SERVER_PORT'] == 443);
+        if ($activeSSL) {
+            $htmlOutput = '<form method="post" action="'. $json_response['redirect_url'] .'">';
+            $htmlOutput .= '<input type="hidden" name="voguepay" value="" />';
+            $htmlOutput .= '<input type="submit" value="' . $params['langpaynow'] . '" />';
+            $htmlOutput .= '</form>';
+            return $htmlOutput;
+        } else {
+            header("Location: ".$json_response['redirect_url']);
+        }
     } else {
         $htmlOutput = "<div class='alert alert-success text-center' role='alert'>
                         <strong>
@@ -247,7 +257,7 @@ function voguepay_3dsecure($params)
                         </strong>
                     </div>";
     }
-    return $htmlOutput;
+    echo $htmlOutput;
 }
 
 /**
