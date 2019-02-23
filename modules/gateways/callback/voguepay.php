@@ -136,7 +136,15 @@ $paymentSuccess = false;
 //check demo for merchant id
 $voguepay_id = ($gatewayParams['voguepay_demo'] == 'on') ? "demo" : $voguepay_id;
 if ($success && $voguepay_response['transaction']['merchant_id'] == $voguepay_id && $voguepay_response['transaction']['status'] == 'Approved') {
-    // die("<pre>".print_r($voguepay_response, true)."</pre>");
+    // precheck incase the callback url has been triggered by the gateway
+    $command = 'GetInvoice';
+    $postData = array(
+        'invoiceid' => $invoiceId,
+    );
+    $adminUsername = ''; // Optional for WHMCS 7.2 and later
+    // get invoice details
+    $invoice_details = localAPI($command, $postData, $adminUsername);
+
     /**
      * Add Invoice Payment.
      *
@@ -148,13 +156,17 @@ if ($success && $voguepay_response['transaction']['merchant_id'] == $voguepay_id
      * @param float $paymentFee      Payment fee (optional)
      * @param string $gatewayModule  Gateway module name
      */
-    addInvoicePayment(
-        $invoiceId,
-        $transactionId,
-        $paymentAmount,
-        $paymentFee,
-        $gatewayModuleName
-    );
+    //check if invoice is approved already
+    // if not the approve it
+    if ($invoice_details['status'] != 'Paid') {
+        addInvoicePayment(
+            $invoiceId,
+            $transactionId,
+            $paymentAmount,
+            $paymentFee,
+            $gatewayModuleName
+        );
+    }
     $paymentSuccess = true;
 }
 /**
