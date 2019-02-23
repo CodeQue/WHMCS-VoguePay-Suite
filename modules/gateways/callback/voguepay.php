@@ -144,7 +144,6 @@ if ($success && $voguepay_response['transaction']['merchant_id'] == $voguepay_id
     $adminUsername = ''; // Optional for WHMCS 7.2 and later
     // get invoice details
     $invoice_details = localAPI($command, $postData, $adminUsername);
-
     /**
      * Add Invoice Payment.
      *
@@ -158,7 +157,7 @@ if ($success && $voguepay_response['transaction']['merchant_id'] == $voguepay_id
      */
     //check if invoice is approved already
     // if not the approve it
-    if ($invoice_details['status'] != 'Paid') {
+    if ($invoice_details['status'] == "Unpaid") {
         addInvoicePayment(
             $invoiceId,
             $transactionId,
