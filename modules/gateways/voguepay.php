@@ -1,5 +1,4 @@
 <?php
-
 /**
  * WHMCS Sample Merchant Gateway Module
  *
@@ -21,11 +20,11 @@
  * @copyright Copyright (c) WHMCS Limited 2017
  * @license http://www.whmcs.com/license/ WHMCS Eula
  */
-
+// include database call
+use WHMCS\Database\Capsule;
 if (!defined("WHMCS")) {
     die("This file cannot be accessed directly");
 }
-
 /**
  * Define module related meta data.
  *
@@ -185,7 +184,7 @@ function voguepay_3dsecure($params)
         "hash" => $voguepay_hash,
         "total" => $whmcs_amount,
         "email" => $card_holder_email,
-        "merchant_ref" => $whmcs_invoice,
+        "merchant_ref" => $whmcs_invoice."##".$params['clientdetails']['id'],
         "currency" => $whmcs_currency,
         "memo" => $whmcs_description,
         "referral_url" => $origin_url,
@@ -201,7 +200,8 @@ function voguepay_3dsecure($params)
         ),
         "phone" => $card_holder_phone,
         "address" => $card_holder_address,
-        "developer_code" => "5c654d119982a"
+        "developer_code" => "5c654d119982a",
+        "tokenize" => true
     );
 
     //json encode array details
@@ -236,6 +236,14 @@ function voguepay_3dsecure($params)
                         </strong>
                     </div>";
     } else if ($json_response['status'] == "OK") {
+        // remove the card details that was saved to database
+         Capsule::table('tblclients')
+        ->where('id', $params['clientdetails']['id'])
+        ->update(
+            [
+                'cardnum' => '',
+            ]
+        );
         // confirm if ssl is active for website
         // if ssl is active, load payment form in an iframe
         // if not active, redirect 

@@ -20,6 +20,7 @@
  * @license http://www.whmcs.com/license/ WHMCS Eula
  */
 // Require libraries needed for gateway module functions.
+use WHMCS\Database\Capsule;
 require_once __DIR__ . '/../../../init.php';
 $whmcs->load_function('gateway');
 $whmcs->load_function('invoice');
@@ -74,9 +75,11 @@ curl_close($ch);
 //Result is json string so we convert into array
 $voguepay_response = substr($voguepay_response, 3);
 $voguepay_response = json_decode($voguepay_response,true);
+// split the merchant ref, it contains both the invoice id and the user id
+$split_reference = explode("##", $voguepay_response['transaction']['merchant_ref']);
 
 $success = ($voguepay_response['transaction']['status'] == "Approved") ? true : false;
-$invoiceId = $voguepay_response['transaction']['merchant_ref'];
+$invoiceId = $split_reference[0];
 $paymentAmount = $voguepay_response['transaction']['total'];
 $paymentFee = $voguepay_response['transaction']['charges_paid_by_merchant'];
 $hash = $voguepay_response['hash'];
@@ -108,56 +111,73 @@ if($hash != $expected_hash){
  * @param string $gatewayName Gateway Name
  */
 $invoiceId = checkCbInvoiceID($invoiceId, $gatewayParams['name']);
-/**
- * Check Callback Transaction ID.
- *
- * Performs a check for any existing transactions with the same given
- * transaction number.
- *
- * Performs a die upon encountering a duplicate.
- *
- * @param string $transactionId Unique Transaction ID
- */
-checkCbTransID($transactionId);
-/**
- * Log Transaction.
- *
- * Add an entry to the Gateway Log for debugging purposes.
- *
- * The debug data can be a string or an array. In the case of an
- * array it will be
- *
- * @param string $gatewayName        Display label
- * @param string|array $debugData    Data to log
- * @param string $transactionStatus  Status
- */
-logTransaction($gatewayParams['name'], $voguepay_response, $transactionStatus);
-$paymentSuccess = false;
-//check demo for merchant id
-$voguepay_id = ($gatewayParams['voguepay_demo'] == 'on') ? "demo" : $voguepay_id;
-if ($success && $voguepay_response['transaction']['merchant_id'] == $voguepay_id && $voguepay_response['transaction']['status'] == 'Approved') {
-    // precheck incase the callback url has been triggered by the gateway
-    $command = 'GetInvoice';
-    $postData = array(
-        'invoiceid' => $invoiceId,
-    );
-    $adminUsername = ''; // Optional for WHMCS 7.2 and later
-    // get invoice details
-    $invoice_details = localAPI($command, $postData, $adminUsername);
+
+//check invoice status
+// if status of invoice is paid
+// redirect to invoice to show status
+$command = 'GetInvoice';
+$postData = array(
+    'invoiceid' => $invoiceId,
+);
+$adminUsername = ''; // Optional for WHMCS 7.2 and later
+// get invoice details
+$invoice_details = localAPI($command, $postData, $adminUsername);
+if ($invoice_details['status'] == "Paid") $paymentSuccess = true;
+else{
     /**
-     * Add Invoice Payment.
+     * Check Callback Transaction ID.
      *
-     * Applies a payment transaction entry to the given invoice ID.
+     * Performs a check for any existing transactions with the same given
+     * transaction number.
      *
-     * @param int $invoiceId         Invoice ID
-     * @param string $transactionId  Transaction ID
-     * @param float $paymentAmount   Amount paid (defaults to full balance)
-     * @param float $paymentFee      Payment fee (optional)
-     * @param string $gatewayModule  Gateway module name
+     * Performs a die upon encountering a duplicate.
+     *
+     * @param string $transactionId Unique Transaction ID
      */
-    //check if invoice is approved already
-    // if not the approve it
-    if ($invoice_details['status'] == "Unpaid") {
+    checkCbTransID($transactionId);
+    /**
+     * Log Transaction.
+     *
+     * Add an entry to the Gateway Log for debugging purposes.
+     *
+     * The debug data can be a string or an array. In the case of an
+     * array it will be
+     *
+     * @param string $gatewayName        Display label
+     * @param string|array $debugData    Data to log
+     * @param string $transactionStatus  Status
+     */
+    logTransaction($gatewayParams['name'], $voguepay_response, $transactionStatus);
+    $paymentSuccess = false;
+    //check demo for merchant id
+    $voguepay_id = ($gatewayParams['voguepay_demo'] == 'on') ? "demo" : $voguepay_id;
+    if ($success && $voguepay_response['transaction']['merchant_id'] == $voguepay_id && $voguepay_response['transaction']['status'] == 'Approved') {
+        
+        //check if token is returned
+        // if returned then update the token in the clients table
+        if (!empty($voguepay_response['transaction']['token'])) {
+            Capsule::table('tblclients')
+            ->where('id', $split_reference[1])
+            ->update(
+                [
+                    'gatewayid' => $voguepay_response['transaction']['token'],
+                ]
+            );
+        }
+        /**
+         * Add Invoice Payment.
+         *
+         * Applies a payment transaction entry to the given invoice ID.
+         *
+         * @param int $invoiceId         Invoice ID
+         * @param string $transactionId  Transaction ID
+         * @param float $paymentAmount   Amount paid (defaults to full balance)
+         * @param float $paymentFee      Payment fee (optional)
+         * @param string $gatewayModule  Gateway module name
+         */
+        //check if invoice is approved already
+        // if not the approve it
+        
         addInvoicePayment(
             $invoiceId,
             $transactionId,
@@ -165,8 +185,32 @@ if ($success && $voguepay_response['transaction']['merchant_id'] == $voguepay_id
             $paymentFee,
             $gatewayModuleName
         );
+        $paymentSuccess = true;
+    } else {
+        // get client details
+        $command = 'GetClientsDetails';
+        $postData = array(
+            'clientid' => $split_reference[1],
+            'stats' => true,
+        );
+        $adminUsername = ''; // Optional for WHMCS 7.2 and later
+        $client = localAPI($command, $postData, $adminUsername);
+        //clear the card details so the card can be re-entered
+        if (empty($client['gatewayid'])){
+            Capsule::table('tblclients')
+            ->where('id', $split_reference[1])
+            ->update(
+                [
+                    'gatewayid' => '',
+                    'cardtype' => '',
+                    'startdate' => '',
+                    'expdate' => '',
+                    'issuenumber' => '',
+                    'cardlastfour' => ''
+                ]
+            );
+        }
     }
-    $paymentSuccess = true;
 }
 /**
  * Redirect to invoice.
